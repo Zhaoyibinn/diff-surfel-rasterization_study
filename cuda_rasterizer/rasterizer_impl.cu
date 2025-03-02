@@ -195,50 +195,51 @@ CudaRasterizer::BinningState CudaRasterizer::BinningState::fromChunk(char*& chun
 
 // Forward rendering procedure for differentiable rasterization
 // of Gaussians.
+// 光栅化入口
 int CudaRasterizer::Rasterizer::forward(
 	std::function<char* (size_t)> geometryBuffer,
 	std::function<char* (size_t)> binningBuffer,
-	std::function<char* (size_t)> imageBuffer,
-	const int P, int D, int M,
-	const float* background,
+	std::function<char* (size_t)> imageBuffer,//三个resizeFunctional
+	const int P, int D, int M,//多少个点，球谐系数的层数，球谐系数个数
+	const float* background,//背景颜色
 	const int width, int height,
-	const float* means3D,
-	const float* shs,
-	const float* colors_precomp,
-	const float* opacities,
-	const float* scales,
-	const float scale_modifier,
-	const float* rotations,
+	const float* means3D,//三维点的三维坐标
+	const float* shs,//全部的球谐系数
+	const float* colors_precomp,//在python中为colors_precomp，输入不是RGB则必须，单纯渲染的时候是空
+	const float* opacities,//三维点的不透明度
+	const float* scales,//scale参数
+	const float scale_modifier,//应该是尺度参数，默认为1
+	const float* rotations,//rotation参数
 	const float* transMat_precomp,
-	const float* viewmatrix,
-	const float* projmatrix,
-	const float* cam_pos,
-	const float tan_fovx, float tan_fovy,
-	const bool prefiltered,
-	float* out_color,
-	float* out_others,
-	int* radii,
+	const float* viewmatrix,//相机外参矩阵
+	const float* projmatrix,//投影矩阵，内参矩阵和外参矩阵一通计算得到
+	const float* cam_pos,//相机的光心，用位姿反算出来的
+	const float tan_fovx, float tan_fovy,//视野角（单侧）
+	const bool prefiltered,//默认false
+	float* out_color,//输入时还都是0，{3, H, W}
+	float* out_others,//输入时还都是0
+	int* radii,//和三维点size相同，都是0
 	bool debug)
 {
 	const float focal_y = height / (2.0f * tan_fovy);
-	const float focal_x = width / (2.0f * tan_fovx);
+	const float focal_x = width / (2.0f * tan_fovx);//计算xy的焦距
 
 	size_t chunk_size = required<GeometryState>(P);
 	char* chunkptr = geometryBuffer(chunk_size);
-	GeometryState geomState = GeometryState::fromChunk(chunkptr, P);
+	GeometryState geomState = GeometryState::fromChunk(chunkptr, P);//构造所需空间，里面包含了很多属性
 
 	if (radii == nullptr)
 	{
 		radii = geomState.internal_radii;
 	}
 
-	dim3 tile_grid((width + BLOCK_X - 1) / BLOCK_X, (height + BLOCK_Y - 1) / BLOCK_Y, 1);
-	dim3 block(BLOCK_X, BLOCK_Y, 1);
+	dim3 tile_grid((width + BLOCK_X - 1) / BLOCK_X, (height + BLOCK_Y - 1) / BLOCK_Y, 1);//网格尺寸。每张图片的网格数量是定死的
+	dim3 block(BLOCK_X, BLOCK_Y, 1);//线程块尺寸 ， 16*16*1
 
 	// Dynamically resize image-based auxiliary buffers during training
 	size_t img_chunk_size = required<ImageState>(width * height);
 	char* img_chunkptr = imageBuffer(img_chunk_size);
-	ImageState imgState = ImageState::fromChunk(img_chunkptr, width * height);
+	ImageState imgState = ImageState::fromChunk(img_chunkptr, width * height);//也是开辟了一块空间，给img用
 
 	if (NUM_CHANNELS != 3 && colors_precomp == nullptr)
 	{
@@ -246,6 +247,8 @@ int CudaRasterizer::Rasterizer::forward(
 	}
 
 	// Run preprocessing per-Gaussian (transformation, bounding, conversion of SHs to RGB)
+	// 预处理
+	// CHECK_CUDA检查cuda操作是否成功
 	CHECK_CUDA(FORWARD::preprocess(
 		P, D, M,
 		means3D,

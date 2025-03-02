@@ -38,24 +38,24 @@ std::function<char*(size_t N)> resizeFunctional(torch::Tensor& t) {
 
 std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 RasterizeGaussiansCUDA(
-	const torch::Tensor& background,
-	const torch::Tensor& means3D,
-	const torch::Tensor& colors,
-	const torch::Tensor& opacity,
-	const torch::Tensor& scales,
-	const torch::Tensor& rotations,
-	const float scale_modifier,
+	const torch::Tensor& background,//背景颜色
+	const torch::Tensor& means3D,//三维点的三维坐标
+	const torch::Tensor& colors,//在python中为colors_precomp，输入不是RGB则必须，单纯渲染的时候是空
+	const torch::Tensor& opacity,//三维点的不透明度
+	const torch::Tensor& scales,//scale参数，三个方向的尺度
+	const torch::Tensor& rotations,//rotation参数，高斯的旋转，四元数
+	const float scale_modifier,//应该是尺度参数，默认为1
 	const torch::Tensor& transMat_precomp,
-	const torch::Tensor& viewmatrix,
-	const torch::Tensor& projmatrix,
-	const float tan_fovx, 
-	const float tan_fovy,
-	const int image_height,
-	const int image_width,
-	const torch::Tensor& sh,
-	const int degree,
-	const torch::Tensor& campos,
-	const bool prefiltered,
+	const torch::Tensor& viewmatrix,//相机外参矩阵(观察矩阵)
+	const torch::Tensor& projmatrix,//global投影矩阵，内参矩阵和外参矩阵一通计算得到
+	const float tan_fovx, //视野角（单侧）
+	const float tan_fovy,//视野角（单侧）
+	const int image_height,//图片尺寸
+	const int image_width,//图片尺寸
+	const torch::Tensor& sh,//全部的球谐系数
+	const int degree,//球谐系数的层数，默认3，四层
+	const torch::Tensor& campos,//相机的光心，用位姿反算出来的
+	const bool prefiltered,//默认false
 	const bool debug)
 {
   if (means3D.ndimension() != 2 || means3D.size(1) != 3) {
@@ -63,7 +63,7 @@ RasterizeGaussiansCUDA(
   }
 
   
-  const int P = means3D.size(0);
+  const int P = means3D.size(0);//多少个点
   const int H = image_height;
   const int W = image_width;
 
@@ -81,10 +81,11 @@ RasterizeGaussiansCUDA(
 
   auto int_opts = means3D.options().dtype(torch::kInt32);
   auto float_opts = means3D.options().dtype(torch::kFloat32);
-
+//分别存储了int和float类型的三维点坐标信息
   torch::Tensor out_color = torch::full({NUM_CHANNELS, H, W}, 0.0, float_opts);
   torch::Tensor out_others = torch::full({3+3+1, H, W}, 0.0, float_opts);
   torch::Tensor radii = torch::full({P}, 0, means3D.options().dtype(torch::kInt32));
+//   开辟空间
   
   torch::Device device(torch::kCUDA);
   torch::TensorOptions options(torch::kByte);
@@ -104,7 +105,7 @@ RasterizeGaussiansCUDA(
 		M = sh.size(1);
 	  }
 
-	  rendered = CudaRasterizer::Rasterizer::forward(
+	  rendered = CudaRasterizer::Rasterizer::forward(//光栅化前向通路
 		geomFunc,
 		binningFunc,
 		imgFunc,
@@ -131,6 +132,7 @@ RasterizeGaussiansCUDA(
 		debug);
   }
   return std::make_tuple(rendered, out_color, out_others, radii, geomBuffer, binningBuffer, imgBuffer);
+//   最后返回给python的就是这个tuple
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>

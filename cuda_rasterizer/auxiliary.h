@@ -192,9 +192,9 @@ __forceinline__ __device__ bool in_frustum(int idx,
 	float3 p_orig = { orig_points[3 * idx], orig_points[3 * idx + 1], orig_points[3 * idx + 2] };
 
 	// Bring points to screen space
-	float4 p_hom = transformPoint4x4(p_orig, projmatrix);
+	float4 p_hom = transformPoint4x4(p_orig, projmatrix);//世界空间坐标直接转NDC坐标，并且自动变齐次
 	float p_w = 1.0f / (p_hom.w + 0.0000001f);
-	float3 p_proj = { p_hom.x * p_w, p_hom.y * p_w, p_hom.z * p_w };
+	float3 p_proj = { p_hom.x * p_w, p_hom.y * p_w, p_hom.z * p_w };//再转换到非齐次
 	p_view = transformPoint4x3(p_orig, viewmatrix);
 
 	if (p_view.z <= 0.2f)// || ((p_proj.x < -1.3 || p_proj.x > 1.3 || p_proj.y < -1.3 || p_proj.y > 1.3)))
@@ -230,7 +230,7 @@ inline __device__ glm::mat3 quat_to_rotmat(const glm::vec4 quat) {
 		2.f * (y * z + w * x),
 		2.f * (x * z + w * y),
 		2.f * (y * z - w * x),
-		1.f - 2.f * (x * x + y * y)
+		1.f - 2.f * (x * x + y * y)//构造旋转矩阵，其实似乎就是构造了三个旋转向量
 	);
 }
 
@@ -286,7 +286,7 @@ inline __device__ glm::mat3
 scale_to_mat(const glm::vec2 scale, const float glob_scale) {
 	glm::mat3 S = glm::mat3(1.f);
 	S[0][0] = glob_scale * scale.x;
-	S[1][1] = glob_scale * scale.y;
+	S[1][1] = glob_scale * scale.y;//构建对角阵，最后一个维度为0，剩下俩scale
 	// S[2][2] = glob_scale * scale.z;
 	return S;
 }

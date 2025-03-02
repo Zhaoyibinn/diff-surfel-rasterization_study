@@ -13,7 +13,103 @@
 #include "auxiliary.h"
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+// #include "zyb_tools.h"
 namespace cg = cooperative_groups;
+
+
+// 下面这些为zyb自己写的
+
+__device__ void floatToStr(float value, char* buffer, int precision = 4) {
+    // 假设buffer足够大，至少20个字符
+    int i = 0;
+
+    // 处理负号
+    if (value < 0) {
+        buffer[i++] = '-';
+        value = -value;
+    }
+
+    // 获取整数部分
+    int integerPart = (int)value;
+    float decimalPart = value - integerPart;
+
+    // 将整数部分转换为字符串
+    if (integerPart == 0) {
+        buffer[i++] = '0';  // 处理整数部分为0的情况
+    } else {
+        int temp = integerPart;
+        int digits = 0;
+        while (temp > 0) {
+            temp /= 10;
+            digits++;
+        }
+        temp = integerPart;
+        for (int j = digits - 1; j >= 0; j--) {
+            buffer[i++] = (temp % 10) + '0';
+            temp /= 10;
+        }
+    }
+
+    // 添加小数点
+    buffer[i++] = '.';
+
+    // 将小数部分转换为字符串
+    for (int j = 0; j < precision; j++) {
+        decimalPart *= 10;
+        int digit = (int)decimalPart;
+        buffer[i++] = digit + '0';
+        decimalPart -= digit;
+    }
+
+    // 添加字符串结束符
+    buffer[i] = '\0';
+}
+
+__device__ void custom_strcat(char* dest, const char* src) {
+    while (*dest != '\0') {
+        dest++;
+    }
+    while (*src != '\0') {
+        *dest = *src;
+        dest++;
+        src++;
+    }
+    *dest = '\0';
+}
+
+
+template <typename T>
+__device__ char* glmMatToString(const T& mat,int h, int w) {
+
+	
+    char buffer[1024 * sizeof(char)];  // 假设缓冲区足够大
+    buffer[0] = '\0';  // 初始化为空字符串
+	// custom_strcat(buffer, "test\n"); 
+    int rows = h;
+    int cols = w;
+
+    for (int i = 0; i < rows; ++i) {
+        for (int j = 0; j < cols; ++j) {
+            // char temp[64];  // 临时缓冲区
+            // 将矩阵元素格式化为字符串
+            // sprintf(temp, "%.2f\t", mat[i][j]);
+			char d_buffer[16 * sizeof(char)];
+			floatToStr(mat[i][j], d_buffer);
+            custom_strcat(buffer, d_buffer);
+			custom_strcat(buffer, "\t");  // 将临时字符串追加到结果中
+        }
+        custom_strcat(buffer, "\n");  // 每行结束后追加换行符
+    }
+	custom_strcat(buffer, "\n");
+    return buffer;
+}
+
+
+// 上面这些为zyb自己写的
+
 
 // Forward method for converting the input spherical harmonics
 // coefficients of each Gaussian to a simple RGB color.
@@ -85,16 +181,18 @@ __device__ void compute_transmat(
 	float3 &normal
 ) {
 
-	glm::mat3 R = quat_to_rotmat(rot);
+	glm::mat3 R = quat_to_rotmat(rot); // 3*3的旋转矩阵
 	glm::mat3 S = scale_to_mat(scale, mod);
-	glm::mat3 L = R * S;
+	glm::mat3 L = R * S; //这里就是计算H中的RS
+
+
 
 	// center of Gaussians in the camera coordinate
 	glm::mat3x4 splat2world = glm::mat3x4(
 		glm::vec4(L[0], 0.0),
 		glm::vec4(L[1], 0.0),
 		glm::vec4(p_orig.x, p_orig.y, p_orig.z, 1)
-	);
+	);//这里构造了四行三列的H，因为H的第三列全都是0，这里没要
 
 	glm::mat4 world2ndc = glm::mat4(
 		projmatrix[0], projmatrix[4], projmatrix[8], projmatrix[12],
@@ -107,23 +205,119 @@ __device__ void compute_transmat(
 		glm::vec4(float(W) / 2.0, 0.0, 0.0, float(W-1) / 2.0),
 		glm::vec4(0.0, float(H) / 2.0, 0.0, float(H-1) / 2.0),
 		glm::vec4(0.0, 0.0, 0.0, 1.0)
-	);
+	);//这俩就是世界坐标到像素坐标的转换
+
 
 	T = glm::transpose(splat2world) * world2ndc * ndc2pix;
+	// 也就是像素点到世界坐标，然后再到uv坐标
+	// char* result = glmMatToString(T,3,3);
+	// printf(result);
+
+	// int tid = threadIdx.x + blockIdx.x * blockDim.x;
+	// if (tid ==1){
+	// 	printf("tid = %d \n",tid);
+
+	// 	printf("check splat2world:\n");
+	// 	for (int i = 0; i < 4; ++i) {  // 行
+    //     for (int j = 0; j < 3; ++j) {  // 列
+    //         printf("%.5f ",splat2world[j][i]);
+    //     }
+	// 		printf("\n");
+	// 	}
+
+	// 	printf("check world2ndc:\n");
+	// 	for (int i = 0; i < 4; ++i) {  // 行
+    //     for (int j = 0; j < 4; ++j) {  // 列
+    //         printf("%.5f ",world2ndc[j][i]);
+    //     }
+	// 		printf("\n");
+	// 	}
+
+	// 	printf("check ndc2pix:\n");
+	// 	for (int i = 0; i < 4; ++i) {  // 行
+    //     for (int j = 0; j < 3; ++j) {  // 列
+    //         printf("%.5f ",ndc2pix[j][i]);
+    //     }
+	// 		printf("\n");
+	// 	}
+
+	// 	printf("check T:\n");
+	// 	for (int i = 0; i < 3; ++i) {  // 行
+    //     for (int j = 0; j < 3; ++j) {  // 列
+    //         printf("%.5f ",T[j][i]);
+    //     }
+	// 		printf("\n");
+	// 	}
+
+    // }
+
+
+
+
+		// printf("\n");
+		// printf("check T[2] * T[2]:  %.2f,%.2f,%.2f          check T[2]:  %.2f,%.2f,%.2f       check d:  %.2f\n",zyb_test.x,zyb_test.y,zyb_test.z,T[2].x,T[2].y,T[2].z,d);
+	
+
+
+
+
+	
 	normal = transformVec4x3({L[2].x, L[2].y, L[2].z}, viewmatrix);
+
+
+
 
 }
 
 // Computing the bounding box of the 2D Gaussian and its center
 // The center of the bounding box is used to create a low pass filter
+// 计算2D高斯的BBOX和中心点
 __device__ bool compute_aabb(
 	glm::mat3 T, 
 	float cutoff,
 	float2& point_image,
 	float2& extent
 ) {
-	glm::vec3 t = glm::vec3(cutoff * cutoff, cutoff * cutoff, -1.0f);
+	
+	glm::vec3 t = glm::vec3(cutoff * cutoff, cutoff * cutoff, -1.0f);//cutoff默认是3，所以默认是(9,9,-1)
+	// char* result = glmMatToString(T,3,3);
+	// printf(result);
+	//T代表了二维高斯平面上的点到像素坐标的投影，所以T[2]就代表了高斯中心到像素坐标的投影
+
 	float d = glm::dot(t, T[2] * T[2]);
+	// 详见官方https://github.com/hbb1/diff-surfel-rasterization/issues/8
+	
+
+	
+	// int tid = threadIdx.x + blockIdx.x * blockDim.x;
+	// if (tid ==1){0
+	// 	printf("tid = %d \n",tid);
+
+	// 	glm::vec3 zyb_test = T[2] * T[2];
+	// 	printf("check T[2] * T[2]:  %.5f,%.5f,%.5f\n",zyb_test.x,zyb_test.y,zyb_test.z);
+
+	// 	printf("check T:\n");
+	// 	for (int i = 0; i < 3; ++i) {  // 行
+    //     for (int j = 0; j < 3; ++j) {  // 列
+    //         printf("%.5f ",T[j][i]);
+    //     }
+	// 		printf("\n");
+	// 	}
+
+
+
+	// 	printf("check d:  %.5f\n",d);
+
+	// 	printf("check t:  %.5f,%.5f,%.5f\n",t.x,t.y,t.z);
+
+	// 	printf("\n");printf("\n");printf("\n");
+	// 	// printf("check T[2] * T[2]:  %.2f,%.2f,%.2f          check T[2]:  %.2f,%.2f,%.2f       check d:  %.2f\n",zyb_test.x,zyb_test.y,zyb_test.z,T[2].x,T[2].y,T[2].z,d);
+	// }
+	
+	
+	// printf("check T[2] * T[2]:  %.2f,%.2f,%.2f          check T[2]:  %.2f,%.2f,%.2f       check d:  %.2f\n",zyb_test.x,zyb_test.y,zyb_test.z,T[2].x,T[2].y,T[2].z,d);
+
+
 	if (d == 0.0) return false;
 	glm::vec3 f = (1 / d) * t;
 
@@ -147,7 +341,7 @@ __device__ bool compute_aabb(
 // Perform initial steps for each Gaussian prior to rasterization.
 template<int C>
 __global__ void preprocessCUDA(int P, int D, int M,
-	const float* orig_points,
+	const float* orig_points,//高斯球中心在世界空间下的坐标
 	const glm::vec2* scales,
 	const float scale_modifier,
 	const glm::vec4* rotations,
@@ -156,8 +350,8 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	bool* clamped,
 	const float* transMat_precomp,
 	const float* colors_precomp,
-	const float* viewmatrix,
-	const float* projmatrix,
+	const float* viewmatrix,// view transform matrix，世界空间坐标转相机空间坐标
+	const float* projmatrix,// 这里的projmatrix其实是projection transform和view transform的合体，直接把世界空间坐标转NDC空间坐标
 	const glm::vec3* cam_pos,
 	const int W, int H,
 	const float tan_fovx, const float tan_fovy,
@@ -172,16 +366,17 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	uint32_t* tiles_touched,
 	bool prefiltered)
 {
-	auto idx = cg::this_grid().thread_rank();
+	auto idx = cg::this_grid().thread_rank();//线程在线程组内的标号
 	if (idx >= P)
 		return;
 
 	// Initialize radius and touched tiles to 0. If this isn't changed,
 	// this Gaussian will not be processed further.
-	radii[idx] = 0;
-	tiles_touched[idx] = 0;
+	radii[idx] = 0; //高斯球半径
+	tiles_touched[idx] = 0; //高斯球在图片上覆盖的tile数量
 
 	// Perform near culling, quit if outside.
+	//执行近剔除，如果高斯球离成像平面太近则退出
 	float3 p_view;
 	if (!in_frustum(idx, orig_points, viewmatrix, projmatrix, prefiltered, p_view))
 		return;
@@ -191,7 +386,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	float3 normal;
 	if (transMat_precomp == nullptr)
 	{
-		compute_transmat(((float3*)orig_points)[idx], scales[idx], scale_modifier, rotations[idx], projmatrix, viewmatrix, W, H, T, normal);
+		compute_transmat(((float3*)orig_points)[idx], scales[idx], scale_modifier, rotations[idx], projmatrix, viewmatrix, W, H, T, normal);//存储在T和normal里面
 		float3 *T_ptr = (float3*)transMats;
 		T_ptr[idx * 3 + 0] = {T[0][0], T[0][1], T[0][2]};
 		T_ptr[idx * 3 + 1] = {T[1][0], T[1][1], T[1][2]};
@@ -205,6 +400,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 		);
 		normal = make_float3(0.0, 0.0, 1.0);
 	}
+	//从此之后transMats就可以代表uv空间到像素空间的转换了
 
 #if DUAL_VISIABLE
 	float cos = -sumf3(p_view * normal);
@@ -481,21 +677,21 @@ void FORWARD::render(
 		out_others);
 }
 
-void FORWARD::preprocess(int P, int D, int M,
-	const float* means3D,
-	const glm::vec2* scales,
-	const float scale_modifier,
-	const glm::vec4* rotations,
-	const float* opacities,
-	const float* shs,
+void FORWARD::preprocess(int P, int D, int M,//多少个点，球谐系数的层数，球谐系数个数
+	const float* means3D,//三维点的三维坐标
+	const glm::vec2* scales,//scale参数
+	const float scale_modifier,//应该是尺度参数，默认为1
+	const glm::vec4* rotations,//rotation参数
+	const float* opacities,//三维点的不透明度
+	const float* shs,//全部的球谐系数
 	bool* clamped,
 	const float* transMat_precomp,
 	const float* colors_precomp,
-	const float* viewmatrix,
-	const float* projmatrix,
-	const glm::vec3* cam_pos,
-	const int W, const int H,
-	const float focal_x, const float focal_y,
+	const float* viewmatrix,//相机外参矩阵；
+	const float* projmatrix,//投影矩阵
+	const glm::vec3* cam_pos,//相机的光心
+	const int W, const int H,//图像高宽
+	const float focal_x, const float focal_y,//xy的焦距
 	const float tan_fovx, const float tan_fovy,
 	int* radii,
 	float2* means2D,
@@ -503,11 +699,14 @@ void FORWARD::preprocess(int P, int D, int M,
 	float* transMats,
 	float* rgb,
 	float4* normal_opacity,
-	const dim3 grid,
+	const dim3 grid,//网格尺寸
 	uint32_t* tiles_touched,
 	bool prefiltered)
 {
-	preprocessCUDA<NUM_CHANNELS> << <(P + 255) / 256, 256 >> > (
+	preprocessCUDA<NUM_CHANNELS> << <(P + 255) / 256, 256 >> > (//这里就开始调用cuda核函数了，<NUM_CHANNELS>是模版参数，为3
+																//(P + 255) / 256个线程块，每个线程块256个线程
+		// preprocessCUDA<NUM_CHANNELS> << <1,1 >> > (//这里就开始调用cuda核函数了，<NUM_CHANNELS>是模版参数，为3
+		// 														//(P + 255) / 256个线程块，每个线程块256个线程
 		P, D, M,
 		means3D,
 		scales,
